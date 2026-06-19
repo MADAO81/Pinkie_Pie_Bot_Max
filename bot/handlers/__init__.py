@@ -5,9 +5,10 @@
 Автор: MADAO81
 """
 
-from bot.handlers import commands, messages
+from bot.handlers.commands import router as commands_router
+from bot.handlers.messages import router as messages_router
 
 __all__ = [
-    'commands',
-    'messages',
+    'commands_router',
+    'messages_router',
 ]
