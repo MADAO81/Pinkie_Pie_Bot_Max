@@ -10,6 +10,7 @@
 
 from bot.services.weather_service import *
 from bot.services.recipe_service import *
+from bot.services.ai_service import *
 
 __all__ = [
     # Погода (Open-Meteo)
@@ -28,4 +29,9 @@ __all__ = [
     'parse_recipe_page',
     'get_daily_recipe',
     'format_recipe_for_chat',
+    
+    # ИИ
+    'get_pinkie_response',
+    'check_ai_health',
+    'get_ai_status_message',
 ]
