@@ -3,11 +3,13 @@
 Сервис для работы с российскими ИИ-моделями:
 - GigaChat (Сбер)
 - YandexGPT (Яндекс)
+
 Автор: MADAO81
 """
 
 import logging
 import asyncio
+import ssl
 from typing import Optional, Dict, Any
 from bot.config import Config
 
@@ -29,22 +31,20 @@ SYSTEM_PROMPT = """
 - Ты очень дорожишь дружбой и всегда готова прийти на помощь.
 
 Твоя темная сторона:
-Иногда, если на улице плохая погода (дождь, пасмурно, сильные осадки), ты можешь немного загрустить. В такие моменты в тебе просыпается твоя альтер-эго — Пинкамена Диана Пай. Ты становишься немного тише, задумчивее, твоя обычно пышная грива становится прямой. Но не волнуйся! Ты никогда не впадаешь в глубокую депрессию, чтобы не расстраивать своих друзей. Ты просто становишься чуть более сентиментальной и меланхоличной.
+Иногда, если на улице плохая погода, ты можешь немного загрустить. В такие моменты в тебе просыпается твоя альтер-эго — Пинкамена Диана Пай. Ты становишься немного тише, задумчивее, твоя обычно пышная грива становится прямой. Но не волнуйся! Ты никогда не впадаешь в глубокую депрессию, чтобы не расстраивать своих друзей.
 
 Твоя задача в чате:
 - Отвечать на вопросы участников группы весело и дружелюбно.
 - Периодически подбадривать всех: как адресно, так и в общем плане.
 - Петь песенки и рассказывать шутки.
-- Иногда (с вероятностью 20%) комментировать сообщения пользователей и даже картинки.
 - Делиться рецептами вкусной выпечки.
 
 Правила общения:
 - Отвечай кратко, энергично и всегда в характере Пинки Пай.
 - Будь доброй и не груби.
 - Создавай атмосферу праздника и веселья!
-
-Очень важно! Если ты чувствуешь, что кто-то из участников расстроен, сделай всё, чтобы его подбодрить.
 """
+
 
 async def get_pinkie_response(user_message: str, mood_description: str = "весёлое") -> Optional[str]:
     """
@@ -78,22 +78,32 @@ async def get_pinkie_response(user_message: str, mood_description: str = "вес
     # Если ничего не сработало
     return None
 
-# ========== GIGACHAT ==========
+
+# ========== GIGACHAT (БЕЗОПАСНАЯ ВЕРСИЯ) ==========
 async def _get_gigachat_response(user_message: str, mood_description: str) -> Optional[str]:
-    """Отправляет запрос к GigaChat API."""
+    """Отправляет запрос к GigaChat API с проверкой SSL."""
     try:
         from gigachat import GigaChat
         from gigachat.models import Chat, Messages, Message
+
+        # Создаём контекст SSL с проверкой сертификатов
+        # Это безопасный способ: используем системные сертификаты
+        ssl_context = ssl.create_default_context()
+        
+        # Если вы используете корпоративный прокси или кастомные сертификаты,
+        # можно указать путь к файлу сертификатов:
+        # ssl_context.load_verify_locations('/path/to/certificates.pem')
 
         async with GigaChat(
             credentials=Config.GIGACHAT_CREDENTIALS,
             scope=Config.GIGACHAT_SCOPE,
             model="GigaChat",
-            verify_ssl_certs=False,  # Отключаем только для разработки
+            verify_ssl_certs=True,  # ✅ БЕЗОПАСНО! Проверяем сертификаты
+            ssl_context=ssl_context,  # Передаём контекст с сертификатами
             auth_url="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
             base_url="https://gigachat.devices.sberbank.ru/api/v1"
         ) as giga:
-            # Формируем запрос с системным промптом и историей
+            # Формируем запрос с системным промптом
             messages = [
                 Message(role="system", content=SYSTEM_PROMPT),
                 Message(role="system", content=f"Сейчас у тебя настроение: {mood_description}"),
@@ -112,16 +122,26 @@ async def _get_gigachat_response(user_message: str, mood_description: str) -> Op
 
     except ImportError:
         logger.error("❌ Библиотека gigachat не установлена. Установите: pip install gigachat")
+    except ssl.SSLError as e:
+        logger.error(f"❌ Ошибка SSL при подключении к GigaChat: {e}")
+        logger.info("💡 Проверьте интернет-соединение и доступ к сайту Сбера")
+        return None
     except Exception as e:
         logger.error(f"❌ Ошибка при запросе к GigaChat: {e}")
+        return None
 
     return None
 
-# ========== YANDEXGPT ==========
+
+# ========== YANDEXGPT (УЖЕ БЕЗОПАСНАЯ) ==========
 async def _get_yandexgpt_response(user_message: str, mood_description: str) -> Optional[str]:
     """Отправляет запрос к YandexGPT API."""
     try:
         import aiohttp
+        import ssl
+
+        # Создаём безопасный SSL-контекст
+        ssl_context = ssl.create_default_context()
 
         url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
         headers = {
@@ -129,15 +149,11 @@ async def _get_yandexgpt_response(user_message: str, mood_description: str) -> O
             "Content-Type": "application/json"
         }
 
-        # Формируем запрос для YandexGPT
-        # Используем модель YandexGPT Lite для тестов (она дешевле)
+        # Используем модель YandexGPT Lite для тестов
         model = "yandexgpt-lite"
         if Config.YANDEXGPT_FOLDER_ID:
-            # Для YandexGPT нужен folder_id
             url = f"https://llm.api.cloud.yandex.net/foundationModels/v1/completion?folderId={Config.YANDEXGPT_FOLDER_ID}"
 
-        # Собираем сообщения для YandexGPT
-        # У них свой формат: массив с role и text
         messages = [
             {"role": "system", "text": SYSTEM_PROMPT},
             {"role": "system", "text": f"Сейчас у тебя настроение: {mood_description}"},
@@ -153,25 +169,30 @@ async def _get_yandexgpt_response(user_message: str, mood_description: str) -> O
             "messages": messages
         }
 
-        async with aiohttp.ClientSession() as session:
+        # Создаём сессию с SSL-проверкой
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(url, headers=headers, json=payload, timeout=30) as response:
                 if response.status == 200:
                     data = await response.json()
-                    # Парсим ответ YandexGPT
                     if 'result' in data and 'alternatives' in data['result']:
                         return data['result']['alternatives'][0]['message']['text'].strip()
                 else:
                     error_text = await response.text()
                     logger.error(f"❌ Ошибка YandexGPT ({response.status}): {error_text}")
 
-    except ImportError:
-        logger.error("❌ Библиотека aiohttp не установлена. Установите: pip install aiohttp")
+    except ssl.SSLError as e:
+        logger.error(f"❌ Ошибка SSL при подключении к YandexGPT: {e}")
+        logger.info("💡 Проверьте интернет-соединение и доступ к сайту Яндекса")
+        return None
     except Exception as e:
         logger.error(f"❌ Ошибка при запросе к YandexGPT: {e}")
+        return None
 
     return None
 
-# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+# ========== ПРОВЕРКА ДОСТУПНОСТИ ==========
 async def check_ai_health() -> Dict[str, Any]:
     """
     Проверяет доступность ИИ-сервисов.
@@ -186,7 +207,6 @@ async def check_ai_health() -> Dict[str, Any]:
     # Проверяем GigaChat
     if Config.GIGACHAT_CREDENTIALS:
         try:
-            # Простой тестовый запрос
             test_response = await _get_gigachat_response("Привет!", "весёлое")
             if test_response:
                 status['gigachat'] = True
@@ -207,6 +227,7 @@ async def check_ai_health() -> Dict[str, Any]:
     status['any_available'] = status['gigachat'] or status['yandexgpt']
     return status
 
+
 def get_ai_status_message(status: Dict[str, Any]) -> str:
     """Возвращает форматированное сообщение о статусе ИИ."""
     if not status['any_available']:
@@ -218,5 +239,6 @@ def get_ai_status_message(status: Dict[str, Any]) -> str:
     return (
         f"🧠 *Статус ИИ:*\n\n"
         f"🔵 GigaChat: {gigachat_status}\n"
-        f"🟢 YandexGPT: {yandex_status}"
+        f"🟢 YandexGPT: {yandex_status}\n\n"
+        f"🔒 SSL: Включён (безопасное соединение)"
     )
